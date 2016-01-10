@@ -1,0 +1,73 @@
+---
+
+- name: Install Bosun Agent (APT)
+  apt: pkg=bosun-scollector state=present upgrade={{ _bosun_agent.upgrade }}
+  when: _bosun_agent.install|bool
+
+- name: Ensure /usr/local/sbin Directory exists
+  file: path=/usr/local/sbin state=directory owner=root group=root mode=0755
+
+- name: Install Bosun Agent (download)
+  get_url: url={{ _bosun_agent.download_url|default("no url specified") }} dest=/usr/local/sbin/scollector force={{ _bosun_agent.upgrade }}
+  register: downloaded
+  when: _bosun_agent.install|lower == "download"
+
+- name: Set File Permissions if Downloaded
+  file: path=/usr/local/sbin/scollector owner=root group=root mode=0755
+  when: downloaded|changed or _bosun_agent.upgrade|bool
+
+- name: Copy Init Script
+  copy: src=etc/init/scollector.conf dest=/etc/init/scollector.conf owner=root group=root mode=0755
+  when: _bosun_agent.init|lower == "upstart" and (downloaded|changed or _bosun_agent.upgrade|bool)
+
+- name: Copy Systemd Unit File
+  copy: src=etc/systemd/system//scollector.service dest=/etc/systemd/system//scollector.service owner=root group=root mode=0644
+  when: _bosun_agent.init|lower == "systemd" and (downloaded|changed or _bosun_agent.upgrade|bool)
+
+- name: Create SCollector Configuration Directory
+  file: path=/etc/bosun state=directory owner=root group=root mode=0755
+
+- name: Enable Bosun Agent
+  service: name=scollector enabled=yes
+
+- name: Create bosun-agent logrotate configuration
+  copy: src=etc/logrotate.d/scollector dest=/etc/logrotate.d/scollector owner=root group=root mode=0644
+  when: _bosun_agent.init|lower == "upstart"
+
+- name: Ensure /usr/local/bin Directory exists
+  file: path=/usr/local/bin state=directory owner=root group=root mode=0755
+
+- name: Create CLI datum sender
+  template: src=usr/local/bin/post_datum_to_bosun.py.j2 dest=/usr/local/bin/post_datum_to_bosun.py owner=root group=root mode=0755
+
+- set_fact:
+    curl_auth: "-u {{ _bosun_agent.server.user }}:{{ _bosun_agent.server.password }}"
+  when: _bosun_agent.server.user is defined and _bosun_agent.server.password is defined
+
+- name: Announce Meta data of external collector metrics
+  command: >
+    curl -w "%{http_code}" -H "Content-Type: application/json" -X POST -d '[ { "metric": "{{ item.metric }}", "name": "rate", "value": "{{ item.meta.ratetype }}" }, { "metric": "{{ item.metric }}", "name": "unit", "value": "{{ item.meta.unit }}" }, { "metric": "{{ item.metric }}", "name": "desc", "value": "{{ item.meta.desc|default('') }}" } ]' {{ curl_auth|default("") }} {{ _bosun_agent.server.protocol|default("http") }}://{{ _bosun_agent.server.host }}:{{ _bosun_agent.server.port|default("8070") }}/api/metadata/put
+  register: result
+  failed_when: result.stdout != "204"
+  with_items: _bosun_agent.external_collectors.collectors
+
+- name: Create external collectors directory
+  file: path={{ _bosun_agent.external_collectors.dir }} state=directory owner=root group=root mode=0750
+
+- name: Create external collectors interval directories
+  file: path={{ _bosun_agent.external_collectors.dir }}/{{ item.interval }} state=directory owner=root group=root mode=0750
+  with_items: _bosun_agent.external_collectors.collectors
+  notify:
+    - Restart scollector
+
+- name: Create external collectors
+  template: src=external_collectors/{{ item.template }} dest={{ _bosun_agent.external_collectors.dir }}/{{ item.interval }}/{{ item.filename }} owner=root group=root mode=0750
+  with_items: _bosun_agent.external_collectors.collectors
+  notify:
+    - Restart scollector
+
+- name: Configure scollector
+  template: src=etc/bosun/scollector.conf.j2 dest=/etc/bosun/scollector.conf owner=root group=root mode=0640
+  notify:
+    - Restart scollector
+

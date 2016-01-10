@@ -1,0 +1,12 @@
+/var/log/scollector.log {
+	rotate 7
+	daily
+	create
+	missingok
+	notifempty
+	compress
+        su root adm
+	postrotate
+                invoke-rc.d scollector restart > /dev/null
+        endscript
+}

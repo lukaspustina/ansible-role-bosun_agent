@@ -1,0 +1,4 @@
+{{ _bosun_agent.external_collectors.template }}
+
+printValue "{{ item.metric }}" $(ps ax | wc -l) {{ item.tags | default('') }}
+

@@ -1,0 +1,17 @@
+Host = "{{ _bosun_agent.server.protocol|default("http") }}://{% if _bosun_agent.server.user is defined and _bosun_agent.server.password is defined %}{{ _bosun_agent.server.user }}:{{ _bosun_agent.server.password }}@{% endif %}{{ _bosun_agent.server.host }}:{{ _bosun_agent.server.port|default("8070") }}"
+
+FullHost = false
+Hostname = "{{ _bosun_agent.hostname }}"
+ColDir = "{{ _bosun_agent.external_collectors.dir }}"
+DisableSelf = false
+
+[Tags]
+  hostgroup = "{{ _bosun_agent.hostgroup }}"
+{% for k,v in _bosun_agent.common.tags.iteritems() %}
+  {{ k }} = "{{ v }}"
+{% endfor %}
+
+{% if _bosun_agent.extra_lines is defined %}
+{{ _bosun_agent.extra_lines }}
+{% endif %}
+

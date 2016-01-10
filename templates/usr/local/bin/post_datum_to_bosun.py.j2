@@ -1,0 +1,124 @@
+#!/usr/bin/python
+
+################################################################################
+#
+# Send a single datum to Bosun
+# Author lukas.pustina
+#
+# Exit codes:
+#  = 0 datum successfully added
+#  > 0 failed to add datum
+#
+################################################################################
+
+import argparse
+import time
+import json
+import requests
+import sys
+
+DEFAULT_BOSUN_URL = '{{ _bosun_agent.server.protocol|default("http") }}://{% if _bosun_agent.server.user is defined and _bosun_agent.server.password is defined %}{{ _bosun_agent.server.user }}:{{ _bosun_agent.server.password }}@{% endif %}{{ _bosun_agent.server.host }}:{{ _bosun_agent.server.port|default("8070") }}'
+COMMON_TAGS = '{% for (k,v) in _bosun_agent.common.tags.iteritems() %}{{ k }}:{{ v }},{% endfor %}host:{{ _bosun_agent.hostname ~ "." ~ _bosun_agent.domain }},hostgroup:{{ _bosun_agent.hostgroup }}'
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", help="Bosun API URL", default=DEFAULT_BOSUN_URL)
+    parser.add_argument("--verbose", help="Verbose output", action='store_true')
+    parser.add_argument("-m", "--metric", help="metric name", required=True)
+    parser.add_argument("-v", "--value", help="value -- must be int", type=int, required=True)
+    parser.add_argument("-r", "--rate", help="metric rate type -- must be one of 'gauge', 'counter', 'rate'", required=True)
+    parser.add_argument("-u", "--unit", help="metric unit -- e.g. 'errors', 'documents'", required=True)
+    parser.add_argument("-d", "--description", help="metric description", required=False)
+    parser.add_argument("--tags", help="tags in form of 'key:value,...'", default="")
+    args = parser.parse_args()
+
+    tag_string = ",".join([x for x in (COMMON_TAGS, args.tags) if x is not ""])
+    tags = transform_tags_from_args(tag_string)
+
+    response = meta(args)
+    meta_exit_code = check_response(response)
+    if args.verbose or meta_exit_code is not 0:
+        printResponse(meta_json, response)
+
+    response = datum(args, tags)
+    datum_exit_code = check_response(response)
+
+    if args.verbose or datum_exit_code is not 0:
+        printResponse(datum_json, response)
+
+    return meta_exit_code + datum_exit_code
+
+
+def transform_tags_from_args(tag_string):
+    tags = {k: v for (k, v) in [x.split(':') for x in tag_string.split(',')]}
+
+    return tags
+
+
+def meta(args):
+    meta = create_meta(args.metric, args.rate, args.unit, args.description)
+    meta_json = json.dumps(meta, ensure_ascii=False)
+    response = send_meta(args.url, meta_json)
+
+    return response
+
+
+def create_meta(metric, rate, unit, desc):
+    meta = []
+    meta.append( { 'metric': metric, 'name': 'rate', 'value': rate } )
+    meta.append( { 'metric': metric, 'name': 'unit', 'value': unit } )
+    meta.append( { 'metric': metric, 'name': 'desc', 'value': desc } )
+
+    return meta
+
+
+def send_meta(url, meta_json):
+    api_url = "%s/api/metadata/put" % url
+    return send(api_url, meta_json)
+
+
+def send(url, json):
+    headers = {'content-type': 'application/json'}
+    response = requests.post(url, data=json, headers=headers)
+
+    return response
+
+
+def datum(args, tags):
+    datum = create_datum(args.metric, int(time.time()), args.value, tags)
+    datum_json = json.dumps(datum, ensure_ascii=False)
+    response = send_datum(args.url, datum_json)
+
+    return response
+
+
+def create_datum(metric, timestamp, value, tags):
+    datum = {}
+    datum['metric'] = metric
+    datum['timestamp'] = int(timestamp)
+    datum['value'] = int(value)
+    datum['tags'] = tags
+
+    return datum
+
+
+def send_datum(url, datum_json):
+    api_url = "%s/api/put" % url
+    return send(api_url, datum_json)
+
+
+def check_response(response):
+    if response.status_code is 204: return 0
+    return 1
+
+
+def printResponse(json, response):
+    print "Request: '%s'" % json
+    print "Response: %d, %s, %s" % (response.status_code, response.reason, response.text)
+
+
+if __name__ == "__main__":
+    exit_code = main()
+    sys.exit(exit_code)
+
