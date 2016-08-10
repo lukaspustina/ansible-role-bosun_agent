@@ -9,4 +9,5 @@ galaxy_info:
   galaxy_tags:
     - ops
     - installer
+dependencies: []
 
